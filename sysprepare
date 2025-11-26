@@ -1,0 +1,65 @@
+#!/bin/sh
+set -o xtrace
+
+setup_hugepages()
+{
+	mount -t hugetlbfs none /dev/hugepages/ -opagesize=1G
+
+	numactl -m 2 echo 32 > /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages_mempolicy
+	numactl -m 2 fallocate -l 32G /dev/hugepages/memory-file-vm0
+
+	numactl -m 3 echo 32 > /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages_mempolicy
+	numactl -m 3 fallocate -l 32G /dev/hugepages/memory-file-vm1
+}
+
+setup_network()
+{
+	/home/karim/vmctl.sh bridge vmbr0
+	/home/karim/vmctl.sh taps vmbr0 tap0 tap1
+	/home/karim/vmctl.sh route vmbr0 enp2s0f0np0
+}
+
+setup_performance()
+{
+	tuned-adm profile throughput-performance
+	echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+	echo always > /sys/kernel/mm/transparent_hugepage/enabled
+	echo always > /sys/kernel/mm/transparent_hugepage/defrag
+	echo 1 > /sys/kernel/mm/transparent_hugepage/khugepaged/defrag
+	echo 0 > /proc/sys/kernel/numa_balancing
+}
+
+setup_dax()
+{
+	mount /dev/nvme1n1 /srv/dax
+	echo /srv/dax/ > /sys/kernel/mm/mempolicy/weighted_interleave/interleave_fs
+}
+
+tune_redis_or_memcached()
+{
+	INTERFACE="$1"
+
+	setup_performance
+
+	echo 262144 > /proc/sys/net/core/somaxconn
+	echo 262144 > /proc/sys/net/ipv4/tcp_max_syn_backlog
+	echo 50 > /proc/sys/net/core/busy_read
+	echo 75 > /proc/sys/net/core/busy_poll
+	echo "none" > /sys/kernel/debug/sched/preempt
+
+	ethtool -C ${INTERFACE} adaptive-rx off adaptive-tx off
+	ethtool -K ${INTERFACE} lro on
+	ethtool -K ${INTERFACE} gro on
+	ethtool -C ${INTERFACE} rx-usecs 1 tx-usecs 1 rx-frames 8192 tx-frames 8192
+}
+
+if [ "$1" = "memcached" ]; then
+	tune_redis_or_memcached $2;
+else
+	setup_performance
+fi
+
+#setup_hugepages
+#setup_network
+#setup_dax
+

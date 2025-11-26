@@ -1,0 +1,72 @@
+#!/bin/sh
+#
+# This script caps the memory on each numa node
+#
+# Author: Karim Manaouil <k.manaouil@gmail.com>
+#
+# The University of Edinburgh 2025
+#
+
+block_size=0
+cap_gb=0
+cap=0
+nr_skip_blocks=0
+
+init_block_size()
+{
+	block_size="0x$(cat /sys/devices/system/memory/block_size_bytes)"
+}
+
+cap_memory_on_node()
+{
+	node=$1
+	cap=$2
+
+	echo "Capping `basename $node` to $cap_gb GiB, skipping $nr_skip_blocks blocks"
+
+	memory_blocks=($(ls $node |\
+		grep '^memory[0-9]' | sort -V))
+
+	for ((i=nr_skip_blocks; i<${#memory_blocks[@]}; i++)); do
+		block="${memory_blocks[$i]}"
+		echo "offline" > "$node/$block/state"
+	done
+}
+
+disable_node(){
+	for block in $1/memory[0-9]*; do
+		echo "offline" > "$block/state";
+	done
+}
+
+cap_memory(){
+	cap_gb=$1
+	cap=$(($cap_gb<<30))
+	nr_skip_blocks=$(($cap/$block_size))
+
+	for node in /sys/devices/system/node/node[0-9]*; do
+		has_cpus=$(cat $node/cpulist)
+		if [ "$has_cpus" = "" ]; then
+			echo "`basename $node` has no CPUs, disabling the entire node"
+			#disable_node $node;
+			continue
+		fi
+		cap_memory_on_node $node $cap
+	done
+}
+
+# main()
+
+init_block_size
+
+if [ "$1" = "cap" ]; then
+	cap_memory $2
+elif [ "$1" = "online" ]; then
+	for block in /sys/devices/system/node/node*/memory[0-9]*; do
+		echo "online" > "$block/state"
+	done
+else
+	echo "./script cap size_in_gb"
+	echo "./script online"
+	exit 0
+fi

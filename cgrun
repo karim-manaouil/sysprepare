@@ -1,0 +1,29 @@
+#!/bin/bash
+
+CGROUP="/sys/fs/cgroup/$1"
+
+create_cg()
+{
+	if [[ ! -d "$CGROUP" ]]; then
+		sudo mkdir "$CGROUP"
+	fi
+
+	echo $$ | sudo tee "$CGROUP/cgroup.procs" > /dev/null
+}
+
+
+clean_cg()
+{
+	echo 1 | sudo tee "$CGROUP/cgroup.kill" > /dev/null
+	sudo rmdir "$CGROUP"
+}
+
+trap 'clean_cg' SIGINT
+
+create_cg
+
+${@:2}
+
+wait $!
+
+clean_cg
